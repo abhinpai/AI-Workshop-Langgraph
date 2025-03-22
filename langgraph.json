@@ -1,0 +1,11 @@
+{
+    "dockerfile_lines": [],
+    "graphs":{
+        "perforamance_insights": "./performance_insights/studio.py:graph"
+    },
+    "env": ".env.example",
+    "python_version": "3.12",
+    "dependencies": [
+        "."
+    ]
+}
