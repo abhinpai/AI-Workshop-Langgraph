@@ -89,6 +89,7 @@ class OutputState(BaseModel):
     start_date: Optional[str]
     end_date: Optional[str]
     report_data: Optional[bytes]
+    trend_data_analysis: Annotated[dict[str, dict[str, str]], merge_dicts]
 
 class PrivateAgentState(AgentState, OutputState):
     token: str = Field(..., description="Access token")

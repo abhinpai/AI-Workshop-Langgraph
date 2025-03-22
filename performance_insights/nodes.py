@@ -8,7 +8,7 @@ from typing import Dict, Any, List
 from datetime import datetime, timedelta
 import aiohttp
 from dotenv import load_dotenv
-from langchain_google_vertexai import VertexAI
+from langchain_google_vertexai import VertexAI, ChatVertexAI
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -27,6 +27,7 @@ from .utils import Logger
 import requests 
 from langchain_openai import AzureChatOpenAI
 from langchain.prompts import ChatPromptTemplate
+from langgraph.types import Send
 
 load_dotenv()
 
@@ -238,7 +239,7 @@ async def get_trend_data(state: PrivateAgentState) -> OutputState:
     )
     
     async def fetch_trend_data(asset: AssetInfo, attribute: AttributeInfo):
-        Logger.processing(f"Fetching trend data for {attribute.name} in {asset.name}")
+        Logger.processing(f"Fetching trend data for {attribute.tag_name} in {asset.name}")
         start = datetime.strptime(state.start_date, "%Y-%m-%dT%H:%M:%S")
         end = datetime.strptime(state.end_date, "%Y-%m-%dT%H:%M:%S")
 
@@ -272,15 +273,15 @@ async def get_trend_data(state: PrivateAgentState) -> OutputState:
         
         df = pd.DataFrame(all_data)
         if not df.empty:
-            Logger.data(f"Processed {len(df)} trend points for {attribute.name}")
-            return asset.id, attribute.name, TrendData(
+            Logger.data(f"Processed {len(df)} trend points for {attribute.tag_name}")
+            return asset.id, attribute.tag_name, TrendData(
                 timestamp=df[0].tolist(),
                 value=df[3].tolist(),
                 quality=df[4].tolist(),
             )
         else:
-            Logger.warning(f"No trend data found for {attribute.name}")
-            return asset.id, attribute.name, None
+            Logger.warning(f"No trend data found for {attribute.tag_name}")
+            return asset.id, attribute.tag_name, None
     
     tasks = []
     for asset in state.assets:
@@ -308,12 +309,21 @@ def format_datetime(date_str: str) -> str:
     return dt.strftime("%B %d, %Y %I:%M %p")  # Example: March 22, 2024 02:30 PM
 
 async def generate_report(state: PrivateAgentState) -> OutputState:
-    """Generate PDF report with stats and graphs."""
+    """Generate PDF report with stats, graphs, and trend analysis."""
     Logger.step(6, 6, "Generating PDF report")
     
     # Create PDF document
     doc = SimpleDocTemplate("report.pdf", pagesize=letter)
     styles = getSampleStyleSheet()
+    
+    # Add justified body text style
+    styles.add(ParagraphStyle(
+        name='JustifiedBody',
+        parent=styles['Normal'],
+        alignment=TA_JUSTIFY,
+        spaceAfter=12
+    ))
+    
     elements = []
     
     # Add title and summary
@@ -330,6 +340,11 @@ async def generate_report(state: PrivateAgentState) -> OutputState:
     for asset in state.assets:
         Logger.processing(f"Processing report for asset: {asset.name}")
         asset_id = asset.id
+
+        if asset.id not in state.trends:
+            Logger.warning(f"No trend data found for asset: {asset.name}")
+            continue
+
         elements.append(Paragraph(f"Asset: {asset.name}", styles["Heading2"]))
         elements.append(Spacer(1, 24))
         
@@ -342,7 +357,7 @@ async def generate_report(state: PrivateAgentState) -> OutputState:
         ]
         
         for attr in attributes:
-            trend = trend_data.get(attr.name)
+            trend = trend_data.get(attr.tag_name)
             if trend:
                 values = np.array(trend['value'])
                 avg_trend = np.mean(values) if len(values) > 0 else None
@@ -350,7 +365,7 @@ async def generate_report(state: PrivateAgentState) -> OutputState:
                 low_trend = np.min(values) if len(values) > 0 else None
 
                 row = [
-                    attr.name,
+                    attr.tag_name,
                     str(attr.high_limit if attr.high_limit is not None else 'N/A'),
                     str(attr.low_limit if attr.low_limit is not None else 'N/A'),
                     str(attr.expected_value if attr.expected_value is not None else 'N/A'),
@@ -360,7 +375,7 @@ async def generate_report(state: PrivateAgentState) -> OutputState:
                 ]
                 table_data.append(row)
            
-            Logger.data(f"Processed trend data for {attr.name}")
+            Logger.data(f"Processed trend data for {attr.tag_name}")
         
         # Add left and right margins by adjusting page width
         available_width = letter[0] - 72  # 72 points = 1 inch margin on each side
@@ -451,13 +466,23 @@ async def generate_report(state: PrivateAgentState) -> OutputState:
                 dpi=300
             )
             
-            # Calculate available space and add page break if needed
-            available_height = letter[1]  # Total page height
-            current_height = 0
             
             # Add graph title with minimal spacing
             elements.append(Paragraph(f"{attr_name} Trend", styles["Heading3"]))
             elements.append(Spacer(1, 12))  # Reduced spacing before graph
+
+
+            # When adding trend analysis
+            if hasattr(state, 'trend_data_analysis'):
+                analysis = state.trend_data_analysis[asset_id][attr_name]
+                elements.append(Paragraph("Trend Analysis", styles["Heading4"]))
+                elements.append(Paragraph(analysis, styles["JustifiedBody"]))
+                elements.append(Spacer(1, 12))
+                # for asset_id, asset_analysis in state.trend_data_analysis.items():
+                #     for attr_name, analysis in asset_analysis.items():
+                        # elements.append(Paragraph("Trend Analysis", styles["Heading4"]))
+                        # elements.append(Paragraph(analysis, styles["JustifiedBody"]))
+                        # elements.append(Spacer(1, 12))
             
             # Add image with adjusted dimensions
             img = Image(f"temp_{asset_id}_{attr_name}.png", width=500, height=250)  # Reduced height
@@ -470,6 +495,7 @@ async def generate_report(state: PrivateAgentState) -> OutputState:
             if len(elements) % 4 == 0:  # Assuming each graph section has 4 elements
                 elements.append(PageBreak())
     
+
     # Build PDF
     Logger.processing("Building final PDF report")
     doc.build(elements)
@@ -489,7 +515,91 @@ async def generate_report(state: PrivateAgentState) -> OutputState:
     return {
         "report_data": report_data
     }
+
+def analyze_trend_with_llm(payload: Dict[str, Any]) -> Dict[str, Any]:
+    asset_id, attribute_name, trend_data = payload["asset_id"], payload["attribute_name"], payload["trend_data"]
+    """Analyze trend data using LLM and generate insights."""
     
+    llm = ChatVertexAI(
+        model="gemini-2.0-flash-001",
+        temperature=0,
+    )
+
+    system_prompt = """
+    You are an expert data analyst specializing in performance metrics analysis. 
+    Analyze the provided trend data and generate insights focusing on:
+    1. Overall trend direction and significance
+    2. Notable patterns or anomalies
+    3. Performance implications
+    4. Recommendations for optimization
+
+    Keep the analysis concise but informative.
+    """
+
+    values = np.array(trend_data['value'])
+
+    # Calculate basic statistics
+    stats = {
+        "mean": float(np.mean(values)),
+        "max": float(np.max(values)),
+        "min": float(np.min(values)),
+        "std": float(np.std(values)),
+        "trend_direction": "increasing" if values[-1] > values[0] else "decreasing",
+        "volatility": "high" if np.std(values) > np.mean(values) * 0.1 else "low"
+    }
+
+    user_prompt = f"""Analyze the following trend data for {attribute_name}:
+        
+        Statistics:
+        - Mean: {stats['mean']:.2f}
+        - Maximum: {stats['max']:.2f}
+        - Minimum: {stats['min']:.2f}
+        - Standard Deviation: {stats['std']:.2f}
+        - Overall Trend: {stats['trend_direction']}
+        - Volatility: {stats['volatility']}
+        
+        Provide a concise analysis with key insights and recommendations. 
+        Make sure the response is just the textual contents with some bullet points if needed. Do not return any markdown or html.
+    """
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        ("user", user_prompt)
+    ])
+
+    chain = prompt | llm
+
+    response = chain.invoke({
+        "attribute_name": attribute_name,
+        "stats": stats
+    })
+
+    return {
+        "trend_data_analysis": {
+            asset_id: {
+                attribute_name: response.content
+            }
+        }
+    }
+
+def analyze_trends_with_llm(state: PrivateAgentState) -> List[Send]:
+    """Analyze all trends in the state and return a list of analysis tasks."""
+    analysis_tasks = []
+    
+    for asset in state.assets:
+        asset_trends = state.trends.get(asset.id, {})
+        for attr_name, trend_data in asset_trends.items():
+            if trend_data is not None:  # Only analyze if we have trend data
+                payload = {
+                        "asset_id": asset.id,
+                        "attribute_name": attr_name,
+                        "trend_data": trend_data
+                    }
+                analysis_tasks.append(
+                    Send("analyze_trend_with_llm", payload)
+                )
+    
+    return analysis_tasks
 
 async def send_email(state: PrivateAgentState) -> OutputState:
     """Send email with report to specified recipients."""

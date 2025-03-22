@@ -4,6 +4,8 @@ from langgraph.graph import Graph, StateGraph, END
 from langchain_core.messages import HumanMessage
 from langchain_google_vertexai import VertexAI
 from performance_insights.nodes import (
+    analyze_trend_with_llm,
+    analyze_trends_with_llm,
     get_token,
     get_assets,
     get_attributes,
@@ -48,6 +50,7 @@ def create_workflow(
     workflow.add_node("get_trend_data", get_trend_data)
     workflow.add_node("generate_report", generate_report)
     workflow.add_node("send_email", send_email)
+    workflow.add_node("analyze_trend_with_llm", analyze_trend_with_llm)
     
     # # Define the workflow edges
     workflow.add_edge("get_token", "get_assets")
@@ -67,7 +70,8 @@ def create_workflow(
     )
     
     workflow.add_edge("filter_attributes", "get_trend_data")
-    workflow.add_edge("get_trend_data", "generate_report")
+    workflow.add_conditional_edges("get_trend_data", analyze_trends_with_llm, "analyze_trend_with_llm")
+    workflow.add_edge("analyze_trend_with_llm", "generate_report")
     workflow.add_edge("generate_report", "send_email")
     workflow.add_edge("send_email", END)
     
