@@ -15,15 +15,18 @@ import seaborn as sns
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, PageBreak
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_JUSTIFY
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 
-from .state import AgentState, OutputState, WorkflowState, AssetInfo, AttributeInfo, TrendData, PrivateAgentState
+from .state import AgentState, OutputState, AssetInfo, AttributeInfo, TrendData, PrivateAgentState
 from .utils import Logger
 import requests 
+from langchain_openai import AzureChatOpenAI
+from langchain.prompts import ChatPromptTemplate
 
 load_dotenv()
 
@@ -494,8 +497,6 @@ async def send_email(state: PrivateAgentState) -> OutputState:
     email_password = os.getenv("EMAIL_PASSWORD")
     smtp_server = os.getenv("SMTP_SERVER")
     smtp_port = int(os.getenv("SMTP_PORT"))
-
-    print("Assets", state.assets)
     
     # Create message
     msg = MIMEMultipart()
@@ -518,7 +519,7 @@ async def send_email(state: PrivateAgentState) -> OutputState:
                 
                 <div style="background-color: #F8F9F9; padding: 15px; border-radius: 5px; margin: 20px 0;">
                     <p><strong style="color: #2C3E50;">📍 Site Name:</strong> {state.site_name}</p>
-                    <p><strong style="color: #2C3E50;">📅 Analysis Period:</strong><br>
+                    <p><strong style="color: #2C3E50;">📅 Analysis of {state.date_range} Days Trends</strong><br>
                        <span style="margin-left: 25px">From: {start_date_formatted}</span><br>
                        <span style="margin-left: 25px">To: {end_date_formatted}</span>
                     </p>

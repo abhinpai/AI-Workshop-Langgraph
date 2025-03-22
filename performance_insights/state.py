@@ -40,9 +40,9 @@ class AttributeInfo(BaseModel):
     raw: str | int | float | None
 
 class TrendData(TypedDict):
-    timestamp: float | None
-    value: int | float | None
-    quality: int | float | None
+    timestamp: float | list[float] | None
+    value: int | float | list[int] | list[float] | None
+    quality: int | float | list[int] | list[float] | None
 
 @dataclass
 class WorkflowState:
@@ -72,7 +72,7 @@ class AgentState(BaseModel):
     site_name: str = Field(..., description="Name of the site")
     object_name: str = Field(..., description="Name of any Object name")
     tenant_id: str = Field(..., description="Tenant ID")
-    date_range: int = Field(..., description="Date range in days", ge=0)
+    date_range: Optional[int] = Field(default=7, description="Date range in days", ge=0)
     email_ids: Optional[list[str]] = Field(
         default=None, description="List of email IDs"
     )
@@ -85,7 +85,7 @@ class OutputState(BaseModel):
     assets: Annotated[list[AssetInfo], add]
     attributes: Annotated[dict[str, list[AttributeInfo]], merge_dicts]
     filtered_attributes: Annotated[dict[str, list[AttributeInfo]], merge_dicts]
-    trends: Annotated[dict[str, list[TrendData]], merge_dicts]
+    trends: Annotated[dict[str, dict[str, TrendData]], merge_dicts]
     start_date: Optional[str]
     end_date: Optional[str]
     report_data: Optional[bytes]
